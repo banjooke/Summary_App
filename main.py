@@ -1,114 +1,97 @@
 import streamlit as st
+from langchain import PromptTemplate
 from langchain.llms import OpenAI
-from langchain_core.prompts import PromptTemplate
+from langchain.chains.summarize import load_summarize_chain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from docx import Document
-import fitz  # PyMuPDF for handling PDF files
-import tiktoken  # Token counting library
+import pandas as pd
+from io import StringIO
 
-# Load the LLM with OpenAI API and dynamic max_tokens
-def load_llm(api_key, max_tokens):
-    return OpenAI(temperature=0.7, openai_api_key=api_key, max_tokens=max_tokens)
+#LLM and key loading function
+def load_LLM(openai_api_key):
+    # Make sure your openai_api_key is set as an environment variable
+    llm = OpenAI(temperature=0, openai_api_key=openai_api_key)
+    return llm
 
-# Define the prompt template for summarizing text with a length parameter
-summary_prompt = PromptTemplate(
-    input_variables=["text", "length"],
-    template="Summarize the following text in a {length} manner:\n\n{text}"
-)
 
-# Function to split text using RecursiveCharacterTextSplitter
-def split_text_recursively(text, chunk_size=1000, chunk_overlap=100):
+#Page title and header
+st.set_page_config(page_title="AI Long Text Summarizer")
+st.header("AI Long Text Summarizer")
+
+
+#Intro: instructions
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("ChatGPT cannot summarize long texts. Now you can do it with this app.")
+
+with col2:
+    st.write("Contact with [AI Accelera](https://aiaccelera.com) to build your AI Projects")
+
+
+#Input OpenAI API Key
+st.markdown("## Enter Your OpenAI API Key")
+
+def get_openai_api_key():
+    input_text = st.text_input(label="OpenAI API Key ",  placeholder="Ex: sk-2twmA8tfCb8un4...", key="openai_api_key_input", type="password")
+    return input_text
+
+openai_api_key = get_openai_api_key()
+
+
+# Input
+st.markdown("## Upload the text file you want to summarize")
+
+uploaded_file = st.file_uploader("Choose a file", type="txt")
+
+       
+# Output
+st.markdown("### Here is your Summary:")
+
+if uploaded_file is not None:
+    # To read file as bytes:
+    bytes_data = uploaded_file.getvalue()
+    #st.write(bytes_data)
+
+    # To convert to a string based IO:
+    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+    #st.write(stringio)
+
+    # To read file as string:
+    string_data = stringio.read()
+    #st.write(string_data)
+
+    # Can be used wherever a "file-like" object is accepted:
+    #dataframe = pd.read_csv(uploaded_file)
+    #st.write(dataframe)
+
+    file_input = string_data
+
+    if len(file_input.split(" ")) > 20000:
+        st.write("Please enter a shorter file. The maximum length is 20000 words.")
+        st.stop()
+
+    if file_input:
+        if not openai_api_key:
+            st.warning('Please insert OpenAI API Key. \
+            Instructions [here](https://help.openai.com/en/articles/4936850-where-do-i-find-my-secret-api-key)', 
+            icon="⚠️")
+            st.stop()
+
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        length_function=len,
-        separators=["\n\n", "\n", " ", ""]
-    )
-    return text_splitter.split_text(text)
+        separators=["\n\n", "\n"], 
+        chunk_size=5000, 
+        chunk_overlap=350
+        )
 
-# Functions to read content from different file types
-def read_txt(file):
-    return file.read().decode("utf-8")
+    splitted_documents = text_splitter.create_documents([file_input])
 
-def read_docx(file):
-    doc = Document(file)
-    return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+    llm = load_LLM(openai_api_key=openai_api_key)
 
-def read_pdf(file):
-    pdf_text = ""
-    with fitz.open(stream=file.read(), filetype="pdf") as pdf_doc:
-        for page in pdf_doc:
-            pdf_text += page.get_text()
-    return pdf_text
+    summarize_chain = load_summarize_chain(
+        llm=llm, 
+        chain_type="map_reduce"
+        )
 
-# Token calculation function using tiktoken
-def calculate_tokens(text):
-    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")  # Adjust the model name as needed
-    tokens = encoding.encode(text)
-    return len(tokens)
+    summary_output = summarize_chain.run(splitted_documents)
 
-# Streamlit app layout
-st.title("File Summarizer with Recursive Text Splitter and Length-based Limits")
-st.write("Upload a .txt, .pdf, or .docx file, choose a summary length, and click 'Summarize' to generate the summary.")
-
-# OpenAI API key input
-openai_api_key = st.text_input("Enter your OpenAI API Key:", type="password")
-
-# File upload section accepting txt, pdf, and docx files
-uploaded_file = st.file_uploader("Choose a file", type=["txt", "pdf", "docx"])
-
-# Dropdown for summary length
-length = st.selectbox("Choose summary length:", ["brief", "medium", "detailed"])
-
-# Set max_tokens based on the selected summary length
-if length == "brief":
-    max_tokens = 50  # Short summary
-elif length == "medium":
-    max_tokens = 150  # Moderate-length summary
-else:
-    max_tokens = 300  # Detailed summary
-
-# Split document content into manageable chunks when file is uploaded
-if uploaded_file and openai_api_key:
-    # Read content based on file type
-    if uploaded_file.name.endswith(".txt"):
-        content = read_txt(uploaded_file)
-    elif uploaded_file.name.endswith(".docx"):
-        content = read_docx(uploaded_file)
-    elif uploaded_file.name.endswith(".pdf"):
-        content = read_pdf(uploaded_file)
-    
-    # Split the content into chunks and display them
-    chunks = split_text_recursively(content, chunk_size=4000, chunk_overlap=100)
-    st.write(f"Document split into {len(chunks)} chunks.")
-    st.write("Click 'Summarize' to process the chunks.")
-
-    # Summarize when the "Summarize" button is clicked
-    if st.button("Summarize"):
-        # Load the LLM with dynamic max_tokens based on length
-        llm = load_llm(openai_api_key, max_tokens)
-
-        summaries = []
-        for chunk in chunks:
-            # Calculate the token count of the prompt
-            prompt = summary_prompt.format(text=chunk, length=length)
-            input_tokens = calculate_tokens(prompt)
-
-            # Check if the total tokens exceed the model limit
-            if input_tokens + max_tokens > 4096:  # Adjust based on the model's limit
-                st.warning("Chunk is too large, reducing size...")
-                # Optionally trim the chunk or modify your logic here
-                chunk = chunk[:4000]  # This is just an example; adjust as needed
-
-            summary = llm(prompt)
-            summaries.append(summary)
-
-        # Combine chunk summaries into a final summary
-        final_summary = " ".join(summaries)
-
-        # Display the final summary
-        st.subheader("Final Summary")
-        st.write(final_summary)
-
-        # Download option for the final summary
-        st.download_button("Download Summary", final_summary, "summary.txt")
+    st.write(summary_output)
