@@ -4,6 +4,10 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from docx import Document
 import fitz  # PyMuPDF for handling PDF files
 
+import langchain_community
+dir(langchain_community)
+
+
 # Load the LLM with OpenAI API
 def load_llm(api_key, max_tokens):
     return OpenAI(temperature=0.7, openai_api_key=api_key, max_tokens=max_tokens)
